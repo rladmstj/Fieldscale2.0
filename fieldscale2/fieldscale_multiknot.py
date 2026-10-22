@@ -78,7 +78,7 @@ class Fieldscale:
     def __init__(
         self,
         max_diff: float = 400,
-        min_diff: float = 400,
+        *,
         iteration: int = 7,
         gamma: float = 1.5,
         clahe: bool = True,
@@ -89,7 +89,6 @@ class Fieldscale:
         grid_shape: tuple[int, int] = (8, 8),
     ):
         self.max_diff = float(max_diff)
-        self.min_diff = float(min_diff)
         self.iteration = int(iteration)
         self.gamma = float(gamma)
         self.clahe = bool(clahe)
@@ -98,31 +97,32 @@ class Fieldscale:
         self.ema_alpha_override = None if ema_alpha_override is None else float(ema_alpha_override)
         self.les_mode = str(les_mode)
         self.grid_shape = tuple(int(v) for v in grid_shape)
+        if len(self.grid_shape) != 2 or any(value <= 0 for value in self.grid_shape):
+            raise ValueError("grid_shape must contain two positive integers.")
         self.ema_alpha = (
             self.ema_alpha_override
             if self.ema_alpha_override is not None
             else 2.0 / (self.ema_period + 1.0)
         )
-        self.prev_min_field = None
-        self.prev_max_field = None
-        self.min_field_buffer = deque(maxlen=self.ema_period)
-        self.max_field_buffer = deque(maxlen=self.ema_period)
-
-    def reset_temporal_state(self) -> None:
-        self.prev_min_field = None
-        self.prev_max_field = None
-        self.min_field_buffer.clear()
-        self.max_field_buffer.clear()
 
     def _load_image(self, input: Union[str, np.ndarray]) -> np.ndarray:
         if isinstance(input, str):
             image = cv2.imread(input, cv2.IMREAD_UNCHANGED)
             if image is None:
                 raise ValueError(f"Unable to read image from path: {input}")
-            return image
-        if isinstance(input, np.ndarray):
-            return input
-        raise TypeError("Input should be a file path or a numpy.ndarray.")
+        elif isinstance(input, np.ndarray):
+            image = input
+        else:
+            raise TypeError("Input should be a file path or a numpy.ndarray.")
+        if image.ndim != 2:
+            raise ValueError("Expected a two-dimensional, single-channel thermal image.")
+        if image.size == 0:
+            raise ValueError("Input image must not be empty.")
+        if any(size < grids for size, grids in zip(image.shape, self.grid_shape)):
+            raise ValueError(
+                f"Input image shape {image.shape} must be at least the grid shape {self.grid_shape}."
+            )
+        return image
 
     def _apply_les(
         self,
@@ -196,17 +196,6 @@ def compute_frame_grid_span_median(
         grid_shape=grid_shape,
     ).astype(np.float64)
     return float(np.median(upper_grid - lower_grid))
-
-
-def select_frame_adaptive_les_diff(frame_grid_span_median: float) -> float:
-    frame_grid_span_median = float(frame_grid_span_median)
-    if frame_grid_span_median < 100.0:
-        return 100.0
-    if frame_grid_span_median < 1000.0:
-        return 500.0
-    if frame_grid_span_median > 2000.0:
-        return 800.0
-    return 600.0
 
 
 def symmetric_message_passing(grid: np.ndarray, alpha: float = 0.5) -> np.ndarray:
@@ -287,28 +276,6 @@ def compute_segment_slopes(
     return widths / spans
 
 
-def _allocate_group_widths(
-    spans: np.ndarray,
-    base_weights: np.ndarray,
-    total_width: float,
-    span_lambda: float,
-    eps: float,
-) -> np.ndarray:
-    spans = np.asarray(spans, dtype=np.float64)
-    if spans.size == 0:
-        return np.zeros(0, dtype=np.float64)
-    if spans.size == 1:
-        return np.array([float(total_width)], dtype=np.float64)
-
-    weights = np.asarray(base_weights, dtype=np.float64)
-    span_ref = float(np.median(spans))
-    scores = weights * np.power((spans + eps) / (span_ref + eps), span_lambda)
-    score_sum = float(scores.sum())
-    if score_sum <= eps:
-        return np.full(spans.shape, float(total_width) / spans.size, dtype=np.float64)
-    return float(total_width) * scores / score_sum
-
-
 def _allocate_linear_group_widths(
     spans: np.ndarray,
     total_width: float,
@@ -353,7 +320,8 @@ def compute_tail_adaptive_segment_totals(
     tail_ratio = tail_span / body_span
     linear_cap_applied = False
     slope_ratio_cap_applied = False
-    tail_adjustment_active = tail_ratio > float(0.3)  # This threshold can be tuned based on empirical observations
+    # The legacy tail_activation_ratio parameter is the compression offset.
+    tail_adjustment_active = tail_ratio > float(0.3)
 
     if tail_adjustment_active:
         tail_excess = max(0.0, tail_ratio - float(tail_activation_ratio))
@@ -1441,7 +1409,7 @@ class MultiKnotPercentileFieldscale(Fieldscale):
     def __init__(
         self,
         max_diff: float = 400,
-        min_diff: float = 400,
+        *,
         iteration: int = 7,
         gamma: float = 1.5,
         clahe: bool = True,
@@ -1466,12 +1434,10 @@ class MultiKnotPercentileFieldscale(Fieldscale):
         les_p95_floor: bool = True,
         p99_violation_strategy: Literal["raw98_or_les_minus_one", "les_minus_one"] = "raw98_or_les_minus_one",
         use_message_passing: bool = False,
-        global_percentiles: bool = False,
         enforce_mode: Literal["bottom_up", "top_down"] = "bottom_up",
     ):
         super().__init__(
             max_diff=max_diff,
-            min_diff=min_diff,
             iteration=iteration,
             gamma=gamma,
             clahe=clahe,
@@ -1497,13 +1463,11 @@ class MultiKnotPercentileFieldscale(Fieldscale):
         self.les_p95_floor = bool(les_p95_floor)
         self.p99_violation_strategy = str(p99_violation_strategy)
         self.use_message_passing = bool(use_message_passing)
-        self.global_percentiles = bool(global_percentiles)
         self.enforce_mode = str(enforce_mode)
         self.prev_knot_grids = None
         self.knot_grid_buffer = deque(maxlen=self.ema_period)
 
     def reset_temporal_state(self) -> None:
-        super().reset_temporal_state()
         self.prev_knot_grids = None
         self.knot_grid_buffer.clear()
 
@@ -1559,8 +1523,7 @@ class MultiKnotPercentileFieldscale(Fieldscale):
         return knot_grids.astype(np.float64, copy=True), debug
 
     def _build_knot_grids(self, image: np.ndarray) -> tuple[np.ndarray, dict[str, object]]:
-        mapping_grid_shape = (1, 1) if self.global_percentiles else self.grid_shape
-        knots = gridwise_percentiles(image, self.percentiles, mapping_grid_shape)
+        knots = gridwise_percentiles(image, self.percentiles, self.grid_shape)
         frame_grid_span_median = None
         frame_les_diff = None
         raw_95_grid = None
@@ -1593,7 +1556,7 @@ class MultiKnotPercentileFieldscale(Fieldscale):
             raw_95_grid, raw_98_grid = gridwise_percentiles(
                 image,
                 percentiles=(95.0, 98.0),
-                grid_shape=mapping_grid_shape,
+                grid_shape=self.grid_shape,
             ).astype(np.float64)
 
             if percentile_99_idx is not None:
@@ -1648,8 +1611,6 @@ class MultiKnotPercentileFieldscale(Fieldscale):
             for _ in range(self.iteration):
                 knots[0] = message_passing(knots[0], direction="decrease").astype(np.float64)
                 knots[-1] = message_passing(knots[-1], direction="increase").astype(np.float64)
-                # knots[1] = message_passing(knots[1], direction="decrease").astype(np.float64)
-                # knots[1] = message_passing(knots[1], direction="increase").astype(np.float64)
 
                 for idx in range(1, knots.shape[0] - 1):
                     knots[idx] = symmetric_message_passing(knots[idx],  alpha=self.mid_alpha)
@@ -1682,7 +1643,8 @@ class MultiKnotPercentileFieldscale(Fieldscale):
             "p99_choose_les_minus_one_mask": p99_choose_les_minus_one_mask,
         }
 
-    def process_debug(self, input: Union[str, np.ndarray]) -> dict:
+    def _process_core(self, input: Union[str, np.ndarray]) -> dict:
+        """Compute the rescaled frame and shared intermediate arrays."""
         image = self._load_image(input)
         raw_knot_grids, knot_build_debug = self._build_knot_grids(image)
         knot_grids, temporal_debug = self._apply_knot_temporal_smoothing(raw_knot_grids)
@@ -1709,68 +1671,6 @@ class MultiKnotPercentileFieldscale(Fieldscale):
             anchor_fields=anchor_fields,
         )
         rescaled = self._postprocess_output(rescaled_pre_post)
-        curve_overlay = build_grid_curve_overlay(
-            image=rescaled,
-            knot_grids=knot_grids,
-            anchor_grids=anchor_grids,
-            raw_image=image,
-        )
-        distribution_overlay = build_grid_distribution_overlay(
-            image=rescaled,
-            raw_image=image,
-            grid_shape=self.grid_shape,
-            knot_grids=knot_grids,
-            percentiles=self.percentiles,
-        )
-        tail_ratio_overlay = build_grid_value_overlay(
-            image=rescaled,
-            value_grid=anchor_debug["tail_ratio_grid"],
-            title="tail ratio",
-            value_format="{:.3f}",
-            active_mask=anchor_debug["tail_adjustment_active_mask"],
-        )
-        body_slope_gain_overlay = build_grid_value_overlay(
-            image=rescaled,
-            value_grid=anchor_debug["body_slope_gain_grid"],
-            title="body slope x",
-            value_format="{:.2f}x",
-            active_mask=anchor_debug["tail_adjustment_active_mask"],
-        )
-        p99_choice_overlay = build_grid_choice_overlay(
-            image=rescaled,
-            choice_grid=knot_build_debug["p99_choice_grid"],
-            title="p99 fix choice",
-        )
-        debug_board = build_grid_debug_board(
-            image_shape=image.shape,
-            anchor_mode=self.anchor_mode,
-            tail_ratio_grid=anchor_debug["tail_ratio_grid"],
-            body_span_grid=anchor_debug["body_span_grid"],
-            tail_span_grid=anchor_debug["tail_span_grid"],
-            body_output_width_grid=anchor_debug["body_output_width_grid"],
-            tail_output_width_grid=anchor_debug["tail_output_width_grid"],
-            tail_compression_grid=anchor_debug["tail_compression_grid"],
-            body_slope_gain_grid=anchor_debug["body_slope_gain_grid"],
-            tail_adjustment_active_mask=anchor_debug["tail_adjustment_active_mask"],
-            linear_cap_mask=anchor_debug["linear_cap_mask"],
-            p99_choice_grid=knot_build_debug["p99_choice_grid"],
-            frame_grid_span_median=knot_build_debug["frame_grid_p95_minus_p5_median"],
-            frame_les_diff=knot_build_debug["frame_les_diff"],
-        )
-        debug_preview = build_debug_preview(
-            raw_image=_normalize_to_uint8(image),
-            rescaled_image=rescaled,
-            curve_overlay=curve_overlay,
-            distribution_overlay=distribution_overlay,
-            tail_ratio_overlay=tail_ratio_overlay,
-            p99_choice_overlay=p99_choice_overlay,
-            body_slope_gain_overlay=body_slope_gain_overlay,
-        )
-        combined_preview = build_side_by_side_preview(
-            left_image=rescaled,
-            right_image=curve_overlay,
-        )
-
         return {
             "image": image,
             "percentiles": list(self.percentiles),
@@ -1785,7 +1685,6 @@ class MultiKnotPercentileFieldscale(Fieldscale):
             "les_p95_floor": self.les_p95_floor,
             "p99_violation_strategy": self.p99_violation_strategy,
             "use_message_passing": self.use_message_passing,
-            "global_percentiles": self.global_percentiles,
             "enforce_mode": self.enforce_mode,
             "raw_knot_grids": raw_knot_grids,
             "knot_grids": knot_grids,
@@ -1815,6 +1714,84 @@ class MultiKnotPercentileFieldscale(Fieldscale):
             "anchor_fields": anchor_fields,
             "rescaled_pre_post": rescaled_pre_post,
             "rescaled": rescaled,
+            **knot_build_debug,
+            **temporal_debug,
+        }
+
+    def process(self, input: Union[str, np.ndarray]) -> np.ndarray:
+        """Rescale a thermal frame without rendering diagnostic images."""
+        return self._process_core(input)["rescaled"]
+
+    def process_debug(self, input: Union[str, np.ndarray]) -> dict:
+        """Rescale a thermal frame and render diagnostic images."""
+        result = self._process_core(input)
+        image = result["image"]
+        rescaled = result["rescaled"]
+        knot_grids = result["knot_grids"]
+        anchor_grids = result["anchor_grids"]
+        curve_overlay = build_grid_curve_overlay(
+            image=rescaled,
+            knot_grids=knot_grids,
+            anchor_grids=anchor_grids,
+            raw_image=image,
+        )
+        distribution_overlay = build_grid_distribution_overlay(
+            image=rescaled,
+            raw_image=image,
+            grid_shape=self.grid_shape,
+            knot_grids=knot_grids,
+            percentiles=self.percentiles,
+        )
+        tail_ratio_overlay = build_grid_value_overlay(
+            image=rescaled,
+            value_grid=result["tail_ratio_grid"],
+            title="tail ratio",
+            value_format="{:.3f}",
+            active_mask=result["tail_adjustment_active_mask"],
+        )
+        body_slope_gain_overlay = build_grid_value_overlay(
+            image=rescaled,
+            value_grid=result["body_slope_gain_grid"],
+            title="body slope x",
+            value_format="{:.2f}x",
+            active_mask=result["tail_adjustment_active_mask"],
+        )
+        p99_choice_overlay = build_grid_choice_overlay(
+            image=rescaled,
+            choice_grid=result["p99_choice_grid"],
+            title="p99 fix choice",
+        )
+        debug_board = build_grid_debug_board(
+            image_shape=image.shape,
+            anchor_mode=self.anchor_mode,
+            tail_ratio_grid=result["tail_ratio_grid"],
+            body_span_grid=result["body_span_grid"],
+            tail_span_grid=result["tail_span_grid"],
+            body_output_width_grid=result["body_output_width_grid"],
+            tail_output_width_grid=result["tail_output_width_grid"],
+            tail_compression_grid=result["tail_compression_grid"],
+            body_slope_gain_grid=result["body_slope_gain_grid"],
+            tail_adjustment_active_mask=result["tail_adjustment_active_mask"],
+            linear_cap_mask=result["linear_cap_mask"],
+            p99_choice_grid=result["p99_choice_grid"],
+            frame_grid_span_median=result["frame_grid_p95_minus_p5_median"],
+            frame_les_diff=result["frame_les_diff"],
+        )
+        debug_preview = build_debug_preview(
+            raw_image=_normalize_to_uint8(image),
+            rescaled_image=rescaled,
+            curve_overlay=curve_overlay,
+            distribution_overlay=distribution_overlay,
+            tail_ratio_overlay=tail_ratio_overlay,
+            p99_choice_overlay=p99_choice_overlay,
+            body_slope_gain_overlay=body_slope_gain_overlay,
+        )
+        combined_preview = build_side_by_side_preview(
+            left_image=rescaled,
+            right_image=curve_overlay,
+        )
+
+        result.update({
             "curve_overlay": curve_overlay,
             "distribution_overlay": distribution_overlay,
             "tail_ratio_overlay": tail_ratio_overlay,
@@ -1823,12 +1800,11 @@ class MultiKnotPercentileFieldscale(Fieldscale):
             "debug_board": debug_board,
             "debug_preview": debug_preview,
             "combined_preview": combined_preview,
-            **knot_build_debug,
-            **temporal_debug,
-        }
+        })
+        return result
 
     def __call__(self, input: Union[str, np.ndarray]) -> np.ndarray:
-        return self.process_debug(input)["rescaled"]
+        return self.process(input)
 
 
 if __name__ == "__main__":

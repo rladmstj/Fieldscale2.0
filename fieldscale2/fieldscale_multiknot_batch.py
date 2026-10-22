@@ -24,7 +24,6 @@ class BatchConfig:
     combined_dir: str | None
     debug_dir: str | None
     max_diff: float
-    min_diff: float
     iteration: int
     gamma: float
     clahe: bool
@@ -49,7 +48,6 @@ class BatchConfig:
     les_p95_floor: bool
     p99_violation_strategy: str
     use_message_passing: bool
-    global_percentiles: bool
     enforce_mode: str
 
 
@@ -70,18 +68,19 @@ def parse_percentile_text(text: str) -> tuple[float, ...]:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Rescale thermal frames with the FIELDSCALE 2.0 three-knot paper preset."
+        description="Rescale thermal frames with the supplied FIELDSCALE 2.0 three-knot implementation."
     )
     parser.add_argument("--input-dir", type=Path, required=True, help="Folder of raw grayscale thermal frames.")
     parser.add_argument("--output-dir", type=Path, required=True, help="Separate folder for 8-bit frames and run metadata.")
     parser.add_argument("--overlay-dir", type=Path, default=None)
     parser.add_argument("--combined-dir", type=Path, default=None)
     parser.add_argument("--save-debug-overlays", action="store_true")
-    parser.add_argument("--max-diff", type=float, default=500.0)
-    parser.add_argument("--min-diff", type=float, default=500.0)
+    parser.add_argument(
+        "--max-diff", type=float, default=500.0,
+        help="Shared LES threshold for both high and low neighborhood deviations of the upper knot.",
+    )
     parser.add_argument("--iteration", type=int, default=7)
     parser.add_argument("--gamma", type=float, default=1.5)
-    parser.add_argument("--clahe", action="store_true", default=True)
     parser.add_argument("--no-clahe", action="store_true")
     parser.add_argument("--video", action="store_true")
     parser.add_argument("--ema-period", type=int, default=10)
@@ -96,7 +95,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--slope-cap-ratio", type=float, default=4.0)
     parser.add_argument("--tail-split-percentile", type=float, default=99.0)
     parser.add_argument("--tail-suppression-gain", type=float, default=1.0)
-    parser.add_argument("--tail-activation-ratio", type=float, default=0.3)
+    parser.add_argument(
+        "--tail-activation-ratio", type=float, default=0.3,
+        help="Compression offset in the supplied implementation; the activation gate is fixed at 0.3.",
+    )
     parser.add_argument("--tail-min-output", type=float, default=4.0)
     parser.add_argument("--body-linear-cap-ratio", type=float, default=1.5)
     parser.add_argument("--body-tail-slope-ratio-cap", type=float, default=2.0)
@@ -113,7 +115,6 @@ def parse_args() -> argparse.Namespace:
     mp_group.add_argument("--use-mp", dest="use_mp", action="store_true")
     mp_group.add_argument("--no-mp", dest="use_mp", action="store_false")
     parser.set_defaults(use_les=True, use_mp=True)
-    parser.add_argument("--global-percentiles", action="store_true")
     parser.add_argument("--enforce-mode", choices=["bottom_up", "top_down"], default="bottom_up")
     parser.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 1) // 2))
     parser.add_argument("--limit", type=int, default=None)
@@ -147,7 +148,6 @@ def iter_frame_files(input_dir: Path, limit: int | None = None) -> list[Path]:
 def build_processor(config: BatchConfig) -> MultiKnotPercentileFieldscale:
     return MultiKnotPercentileFieldscale(
         max_diff=config.max_diff,
-        min_diff=config.min_diff,
         iteration=config.iteration,
         gamma=config.gamma,
         clahe=config.clahe,
@@ -172,7 +172,6 @@ def build_processor(config: BatchConfig) -> MultiKnotPercentileFieldscale:
         les_p95_floor=config.les_p95_floor,
         p99_violation_strategy=config.p99_violation_strategy,
         use_message_passing=config.use_message_passing,
-        global_percentiles=config.global_percentiles,
         enforce_mode=config.enforce_mode,
     )
 
@@ -182,8 +181,12 @@ def process_frame(
     config: BatchConfig,
     processor: MultiKnotPercentileFieldscale,
 ) -> dict[str, object]:
-    debug = processor.process_debug(str(frame_path))
-    output = debug["rescaled"]
+    if config.overlay_dir is None and config.combined_dir is None and config.debug_dir is None:
+        output = processor(str(frame_path))
+        debug = {}
+    else:
+        debug = processor.process_debug(str(frame_path))
+        output = debug["rescaled"]
     output_path = Path(config.output_dir) / frame_path.name
     ok = cv2.imwrite(str(output_path), output)
     if not ok:
@@ -312,10 +315,9 @@ def main() -> None:
         combined_dir=None if combined_dir is None else str(combined_dir),
         debug_dir=None if debug_dir is None else str(debug_dir),
         max_diff=float(args.max_diff),
-        min_diff=float(args.min_diff),
         iteration=int(args.iteration),
         gamma=float(args.gamma),
-        clahe=bool(args.clahe and not args.no_clahe),
+        clahe=not args.no_clahe,
         video=bool(args.video),
         ema_period=int(args.ema_period),
         ema_alpha_override=None if args.ema_alpha_override is None else float(args.ema_alpha_override),
@@ -337,7 +339,6 @@ def main() -> None:
         les_p95_floor=not bool(args.no_les_p95_floor),
         p99_violation_strategy=str(args.p99_violation_strategy),
         use_message_passing=bool(args.use_mp),
-        global_percentiles=bool(args.global_percentiles),
         enforce_mode=str(args.enforce_mode),
     )
 
