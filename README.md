@@ -7,32 +7,23 @@
 Department of Mechanical Engineering, Seoul National University<br/>
 **ICCAS 2026** · <sup>*</sup>Corresponding author
 
-[Method](#method) · [Results](#results) · [Quick start](#quick-start) · [Citation](#citation)
+[Quick start](#quick-start) · [Usage guide](docs/USAGE.md) · [Citation](#citation)
 </div>
 
-**Fieldscale 2.0** converts raw thermal images and video frames into 8-bit images, addressing saturation, residual darkening, and temporal flickering.
-
-## Method
+**Fieldscale 2.0** turns high-bit-depth thermal images and video into 8-bit images while preserving scene details. It combines spatial adaptation, tail-adaptive rescaling, and temporal stabilization to address saturation, residual darkening, and flickering.
 
 <div align="center">
 <a href="assets/pdf/overview.pdf"><img src="assets/overview.png" alt="Method overview: spatial field construction, optional temporal stabilization, and tail-adaptive 8-bit rescaling" width="720"/></a>
 </div>
 
-1. **Spatial adaptation** constructs local intensity fields from the raw thermal input.
-2. **Temporal stabilization (video)** smooths the fields across frames.
-3. **Tail-adaptive mapping** produces the final 8-bit image.
-
-## Results
+The examples below show two improvements over the original Fieldscale: **building details remain visible in saturated regions**, and **backgrounds stay clearer around hot objects**. For video, smoothing the spatial fields helps reduce frame-to-frame flickering.
 
 <div align="center">
 <a href="assets/pdf/saturation.pdf"><img src="assets/saturation.png" alt="Saturation comparison on FLIR ADAS v1: Fieldscale above, Fieldscale 2.0 below" width="360" align="top"/></a>
 <a href="assets/pdf/darkening.pdf"><img src="assets/teaser.png" alt="Residual darkening comparison on FLIR ADAS v2: Fieldscale above, Fieldscale 2.0 below" width="360" align="top"/></a>
 </div>
 
-- **Saturation · FLIR ADAS v1:** More building structure remains visible in the highlighted region.
-- **Residual darkening · FLIR ADAS v2:** The surrounding scene remains more visible around hot objects.
-
-These are original examples from the paper. Click any figure to open its full-resolution PDF. The paper also evaluates temporal consistency and downstream feature matching.
+<p align="center"><sub>Original paper examples: saturation on FLIR ADAS v1 and residual darkening on FLIR ADAS v2. Click any figure for its full-resolution PDF.</sub></p>
 
 ## Quick start
 
