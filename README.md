@@ -23,8 +23,6 @@ The examples below show two improvements over the [original Fieldscale](https://
 <a href="assets/pdf/darkening.pdf"><img src="assets/teaser.png" alt="Residual darkening comparison on FLIR ADAS v2: Fieldscale above, Fieldscale 2.0 below" width="360" align="top"/></a>
 </div>
 
-<p align="center"><sub>Original paper examples: saturation on FLIR ADAS v1 and residual darkening on FLIR ADAS v2. Click any figure for its full-resolution PDF.</sub></p>
-
 ## Quick start
 
 Requires **Python 3.10+**, NumPy, and OpenCV.
