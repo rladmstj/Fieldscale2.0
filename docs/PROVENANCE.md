@@ -9,4 +9,16 @@ The Python implementation is adapted from `rladmstj/Fieldscale2.0`, commit
 
 The code retains the original [Fieldscale](https://github.com/HyeonJaeGil/fieldscale)
 MIT copyright notice. Uncommitted local experiments, datasets, paper source files,
-and generated outputs are not included.
+and generated experiment outputs are not included.
+
+## README figures
+
+The README uses the manuscript's original figures, exported from the author's Overleaf project:
+
+| Original vector figure | README preview | Manuscript figure |
+| --- | --- | --- |
+| `assets/pdf/saturation.pdf` | `assets/saturation.png` | Figure 1: saturation and detail loss, FLIR ADAS v1 |
+| `assets/pdf/darkening.pdf` | `assets/teaser.png` | Figure 2: residual darkening, FLIR ADAS v2 |
+| `assets/pdf/overview.pdf` | `assets/overview.png` | Figure 3: pipeline overview |
+
+The PNG previews are rendered from these PDFs with Poppler. The original figure contents are preserved; no synthetic results or image enhancements are added.

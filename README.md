@@ -8,9 +8,43 @@ Department of Mechanical Engineering, Seoul National University
 **ICCAS 2026**
 
 <sup>*</sup>Corresponding author
+
+[Overview](#overview) · [Visual comparisons](#visual-comparisons) · [Installation](#installation) · [Citation](#citation)
 </div>
 
-Python code for **Fieldscale 2.0**, which rescales high-bit-depth thermal infrared images and video frames to 8-bit images.
+<div align="center">
+<img src="assets/teaser.png" alt="Fieldscale and Fieldscale 2.0 on a FLIR ADAS v2 street scene, with enlarged regions showing residual darkening and recovered scene details" width="960"/>
+<p><em>Preserving scene details around hot objects. Original Fieldscale (top) and Fieldscale 2.0 (bottom), from the paper's FLIR ADAS v2 example.</em></p>
+</div>
+
+## Overview
+
+**Fieldscale 2.0** converts high-bit-depth thermal infrared images and video frames into 8-bit images for visualization and downstream vision tasks. It builds on Fieldscale to address saturation, residual darkening, and frame-to-frame flickering during thermal image rescaling.
+
+- **Preserve local details:** retain visible structures in regions affected by saturation.
+- **Improve scene visibility:** alleviate residual darkening around local hot regions.
+- **Stabilize thermal video:** reduce frame-to-frame flickering through temporal field smoothing.
+
+The paper evaluates rescaling quality, temporal consistency, and downstream feature matching on thermal image and video datasets.
+
+<details>
+<summary>Pipeline overview</summary>
+
+<img src="assets/overview.png" alt="Paper pipeline overview: raw thermal input, spatial field construction, optional temporal stabilization, and 8-bit output" width="1200"/>
+
+Spatial field estimation, optional temporal stabilization, and adaptive rescaling produce the final 8-bit frame. See the [original vector figure](assets/pdf/overview.pdf) for a larger view.
+
+</details>
+
+## Visual comparisons
+
+<div align="center">
+<img src="assets/saturation.png" alt="FLIR ADAS v1 comparison showing saturated building details in Fieldscale and preserved structures in Fieldscale 2.0" width="960"/>
+</div>
+
+**Reducing saturation and detail loss.** In this FLIR ADAS v1 example, Fieldscale 2.0 preserves more structural details in the highlighted region. The accompanying histograms illustrate how raw thermal intensities are mapped into the 8-bit range.
+
+Both comparisons are original qualitative examples from the paper. The full-resolution [darkening](assets/pdf/darkening.pdf) and [saturation](assets/pdf/saturation.pdf) figures are included.
 
 ## Installation
 
