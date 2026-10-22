@@ -62,4 +62,8 @@ Outputs include the rescaled images, `manifest.csv`, and `summary.json`. See the
 
 ## Acknowledgments and License
 
-This work builds on [Fieldscale](https://github.com/HyeonJaeGil/fieldscale). The original attribution is retained under the [MIT License](LICENSE). See [source provenance](docs/PROVENANCE.md).
+This work builds on **Fieldscale**, the locality-aware thermal image rescaling method by Hyeonjae Gil, Myung-Hwan Jeon, and Ayoung Kim (RA-L 2024 / ICRA 2025). Fieldscale 2.0 extends its field-based approach with tail-adaptive rescaling and updated temporal smoothing.
+
+For the original Fieldscale paper, supplementary video, and Python/C++ implementations, visit the [original Fieldscale repository](https://github.com/HyeonJaeGil/fieldscale).
+
+This code is released under the [MIT License](LICENSE), with the original copyright notice retained.
