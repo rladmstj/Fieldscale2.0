@@ -16,7 +16,7 @@ Department of Mechanical Engineering, Seoul National University<br/>
 <a href="assets/pdf/overview.pdf"><img src="assets/overview.png" alt="Method overview: spatial field construction, optional temporal stabilization, and tail-adaptive 8-bit rescaling" width="720"/></a>
 </div>
 
-The examples below show two improvements over the original Fieldscale: **building details remain visible in saturated regions**, and **backgrounds stay clearer around hot objects**. For video, smoothing the spatial fields helps reduce frame-to-frame flickering.
+The examples below show two improvements over the [original Fieldscale](https://github.com/HyeonJaeGil/fieldscale): **building details remain visible in saturated regions**, and **backgrounds stay clearer around hot objects**. For video, smoothing the spatial fields helps reduce frame-to-frame flickering.
 
 <div align="center">
 <a href="assets/pdf/saturation.pdf"><img src="assets/saturation.png" alt="Saturation comparison on FLIR ADAS v1: Fieldscale above, Fieldscale 2.0 below" width="360" align="top"/></a>
@@ -62,8 +62,8 @@ Outputs include the rescaled images, `manifest.csv`, and `summary.json`. See the
 
 ## Acknowledgments and License
 
-This work builds on **Fieldscale**, the locality-aware thermal image rescaling method by Hyeonjae Gil, Myung-Hwan Jeon, and Ayoung Kim (RA-L 2024 / ICRA 2025). Fieldscale 2.0 extends its field-based approach with tail-adaptive rescaling and updated temporal smoothing.
+This work builds on [**Fieldscale**](https://github.com/HyeonJaeGil/fieldscale), the locality-aware thermal image rescaling method by Hyeonjae Gil, Myung-Hwan Jeon, and Ayoung Kim (RA-L 2024 / ICRA 2025). Fieldscale 2.0 extends its field-based approach with tail-adaptive rescaling and updated temporal smoothing.
 
-For the original Fieldscale paper, supplementary video, and Python/C++ implementations, visit the [original Fieldscale repository](https://github.com/HyeonJaeGil/fieldscale).
+The linked repository provides the original paper, supplementary video, and Python/C++ implementations.
 
 This code is released under the [MIT License](LICENSE), with the original copyright notice retained.
