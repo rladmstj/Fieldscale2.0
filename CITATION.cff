@@ -1,0 +1,34 @@
+cff-version: 1.2.0
+message: "If you use this code, please cite the accompanying Fieldscale 2.0 paper."
+type: software
+title: "Fieldscale 2.0: Spatiotemporal Tail-adaptive Rescaling for Thermal Infrared Images"
+authors:
+  - family-names: Kim
+    given-names: Eunseo
+  - family-names: Gil
+    given-names: Hyeonjae
+  - family-names: Rhee
+    given-names: Tai Hyoung
+  - family-names: Kim
+    given-names: Ayoung
+  - family-names: Lee
+    given-names: Dongjae
+license: MIT
+repository-code: "https://github.com/rladmstj/fieldscale2"
+preferred-citation:
+  type: generic
+  title: "Fieldscale 2.0: Spatiotemporal Tail-adaptive Rescaling for Thermal Infrared Images"
+  authors:
+    - family-names: Kim
+      given-names: Eunseo
+    - family-names: Gil
+      given-names: Hyeonjae
+    - family-names: Rhee
+      given-names: Tai Hyoung
+    - family-names: Kim
+      given-names: Ayoung
+    - family-names: Lee
+      given-names: Dongjae
+  year: 2026
+  notes: "ICCAS 2026"
+  url: "https://github.com/rladmstj/fieldscale2"
