@@ -1,54 +1,42 @@
 <div align="center">
-<h2>Fieldscale 2.0: Spatiotemporal Tail-adaptive Rescaling for Thermal Infrared Images</h2>
+<h1>Fieldscale 2.0</h1>
+<p><strong>Spatiotemporal Tail-adaptive Rescaling for Thermal Infrared Images</strong></p>
 
 **Eunseo Kim** · Hyeonjae Gil · Tai Hyoung Rhee · Ayoung Kim · Dongjae Lee<sup>*</sup>
 
-Department of Mechanical Engineering, Seoul National University
+Department of Mechanical Engineering, Seoul National University<br/>
+**ICCAS 2026** · <sup>*</sup>Corresponding author
 
-**ICCAS 2026**
-
-<sup>*</sup>Corresponding author
-
-[Overview](#overview) · [Visual comparisons](#visual-comparisons) · [Installation](#installation) · [Citation](#citation)
+[Method](#method) · [Results](#results) · [Quick start](#quick-start) · [Citation](#citation)
 </div>
+
+**Fieldscale 2.0** converts raw thermal images and video frames into 8-bit images, addressing saturation, residual darkening, and temporal flickering.
+
+## Method
 
 <div align="center">
-<img src="assets/teaser.png" alt="Fieldscale and Fieldscale 2.0 on a FLIR ADAS v2 street scene, with enlarged regions showing residual darkening and recovered scene details" width="960"/>
-<p><em>Preserving scene details around hot objects. Original Fieldscale (top) and Fieldscale 2.0 (bottom), from the paper's FLIR ADAS v2 example.</em></p>
+<a href="assets/pdf/overview.pdf"><img src="assets/overview.png" alt="Method overview: spatial field construction, optional temporal stabilization, and tail-adaptive 8-bit rescaling" width="720"/></a>
 </div>
 
-## Overview
+1. **Spatial adaptation** constructs local intensity fields from the raw thermal input.
+2. **Temporal stabilization (video)** smooths the fields across frames.
+3. **Tail-adaptive mapping** produces the final 8-bit image.
 
-**Fieldscale 2.0** converts high-bit-depth thermal infrared images and video frames into 8-bit images for visualization and downstream vision tasks. It builds on Fieldscale to address saturation, residual darkening, and frame-to-frame flickering during thermal image rescaling.
-
-- **Preserve local details:** retain visible structures in regions affected by saturation.
-- **Improve scene visibility:** alleviate residual darkening around local hot regions.
-- **Stabilize thermal video:** reduce frame-to-frame flickering through temporal field smoothing.
-
-The paper evaluates rescaling quality, temporal consistency, and downstream feature matching on thermal image and video datasets.
-
-<details>
-<summary>Pipeline overview</summary>
-
-<img src="assets/overview.png" alt="Paper pipeline overview: raw thermal input, spatial field construction, optional temporal stabilization, and 8-bit output" width="1200"/>
-
-Spatial field estimation, optional temporal stabilization, and adaptive rescaling produce the final 8-bit frame. See the [original vector figure](assets/pdf/overview.pdf) for a larger view.
-
-</details>
-
-## Visual comparisons
+## Results
 
 <div align="center">
-<img src="assets/saturation.png" alt="FLIR ADAS v1 comparison showing saturated building details in Fieldscale and preserved structures in Fieldscale 2.0" width="960"/>
+<a href="assets/pdf/saturation.pdf"><img src="assets/saturation.png" alt="Saturation comparison on FLIR ADAS v1: Fieldscale above, Fieldscale 2.0 below" width="360" align="top"/></a>
+<a href="assets/pdf/darkening.pdf"><img src="assets/teaser.png" alt="Residual darkening comparison on FLIR ADAS v2: Fieldscale above, Fieldscale 2.0 below" width="360" align="top"/></a>
 </div>
 
-**Reducing saturation and detail loss.** In this FLIR ADAS v1 example, Fieldscale 2.0 preserves more structural details in the highlighted region. The accompanying histograms illustrate how raw thermal intensities are mapped into the 8-bit range.
+- **Saturation · FLIR ADAS v1:** More building structure remains visible in the highlighted region.
+- **Residual darkening · FLIR ADAS v2:** The surrounding scene remains more visible around hot objects.
 
-Both comparisons are original qualitative examples from the paper. The full-resolution [darkening](assets/pdf/darkening.pdf) and [saturation](assets/pdf/saturation.pdf) figures are included.
+These are original examples from the paper. Click any figure to open its full-resolution PDF. The paper also evaluates temporal consistency and downstream feature matching.
 
-## Installation
+## Quick start
 
-Requires **Python 3.10 or newer**.
+Requires **Python 3.10+**, NumPy, and OpenCV.
 
 ```bash
 git clone https://github.com/rladmstj/fieldscale2.git
@@ -58,9 +46,7 @@ source .venv/bin/activate
 python -m pip install -r requirements.txt
 ```
 
-Only NumPy and OpenCV are required.
-
-## Usage
+Rescale single-channel raw thermal frames, typically `uint16` TIFF or PNG files:
 
 ```bash
 python -m fieldscale2 \
@@ -69,9 +55,7 @@ python -m fieldscale2 \
   --workers 1
 ```
 
-Use single-channel raw thermal frames, typically `uint16` TIFF or PNG files. Outputs include the rescaled images, `manifest.csv`, and `summary.json`.
-
-See the [usage guide](docs/USAGE.md) for video processing and diagnostic outputs. Run `python -m fieldscale2 --help` to list all options.
+Outputs include the rescaled images, `manifest.csv`, and `summary.json`. See the [usage guide](docs/USAGE.md) for video processing and diagnostic outputs, or run `python -m fieldscale2 --help` for all options.
 
 ## Citation
 
