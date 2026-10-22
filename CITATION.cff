@@ -14,7 +14,7 @@ authors:
   - family-names: Lee
     given-names: Dongjae
 license: MIT
-repository-code: "https://github.com/rladmstj/fieldscale2"
+repository-code: "https://github.com/rladmstj/Fieldscale2.0"
 preferred-citation:
   type: generic
   title: "Fieldscale 2.0: Spatiotemporal Tail-adaptive Rescaling for Thermal Infrared Images"
@@ -31,4 +31,4 @@ preferred-citation:
       given-names: Dongjae
   year: 2026
   notes: "ICCAS 2026"
-  url: "https://github.com/rladmstj/fieldscale2"
+  url: "https://github.com/rladmstj/Fieldscale2.0"

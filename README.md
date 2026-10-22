@@ -28,8 +28,8 @@ The examples below show two improvements over the [original Fieldscale](https://
 Requires **Python 3.10+**, NumPy, and OpenCV.
 
 ```bash
-git clone https://github.com/rladmstj/fieldscale2.git
-cd fieldscale2
+git clone https://github.com/rladmstj/Fieldscale2.0.git
+cd Fieldscale2.0
 python -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
@@ -54,7 +54,7 @@ Outputs include the rescaled images, `manifest.csv`, and `summary.json`. See the
   author={Kim, Eunseo and Gil, Hyeonjae and Rhee, Tai Hyoung and Kim, Ayoung and Lee, Dongjae},
   year={2026},
   note={ICCAS 2026},
-  url={https://github.com/rladmstj/fieldscale2}
+  url={https://github.com/rladmstj/Fieldscale2.0}
 }
 ```
 
