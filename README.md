@@ -10,7 +10,7 @@ Department of Mechanical Engineering, Seoul National University<br/>
 [Quick start](#quick-start) · [Usage guide](docs/USAGE.md) · [Citation](#citation)
 </div>
 
-**Fieldscale 2.0** turns high-bit-depth thermal images and video into 8-bit images while preserving scene details. It combines spatial adaptation, tail-adaptive rescaling, and temporal stabilization to address saturation, residual darkening, and flickering.
+**Fieldscale 2.0** turns high-bit-depth thermal images into 8-bit images while preserving scene details. Spatial adaptation and tail-adaptive rescaling address saturation and residual darkening. For video sequences, temporal smoothing with SMA initialization followed by EMA additionally reduces flickering. **Image mode processes each image independently, without temporal smoothing.**
 
 <div align="center">
 <a href="assets/pdf/overview.pdf"><img src="assets/overview.png" alt="Method overview: spatial field construction, optional temporal stabilization, and tail-adaptive 8-bit rescaling" width="720"/></a>
@@ -35,7 +35,11 @@ source .venv/bin/activate
 python -m pip install -r requirements.txt
 ```
 
-Rescale single-channel raw thermal frames, typically `uint16` TIFF or PNG files:
+Use single-channel raw thermal frames, typically `uint16` TIFF or PNG files.
+
+### Images
+
+The default mode processes each image independently. SMA and EMA are disabled.
 
 ```bash
 python -m fieldscale2 \
@@ -44,7 +48,19 @@ python -m fieldscale2 \
   --workers 1
 ```
 
-Outputs include the rescaled images, `manifest.csv`, and `summary.json`. See the [usage guide](docs/USAGE.md) for video processing and diagnostic outputs, or run `python -m fieldscale2 --help` for all options.
+### Video sequences
+
+Add `--video` to process ordered frames from one sequence. The first 20 frames initialize the knot grids with SMA; subsequent frames use EMA with `alpha = 1 / 21`. Frames are processed sequentially.
+
+```bash
+python -m fieldscale2 \
+  --input-dir /path/to/ordered_raw_frames \
+  --output-dir outputs/video \
+  --video \
+  --workers 1
+```
+
+Outputs in both modes include the rescaled images, `manifest.csv`, and `summary.json`. See the [usage guide](docs/USAGE.md) for settings and diagnostic outputs, or run `python -m fieldscale2 --help` for all options.
 
 ## Citation
 

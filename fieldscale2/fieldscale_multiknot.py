@@ -83,7 +83,7 @@ class Fieldscale:
         gamma: float = 1.5,
         clahe: bool = True,
         video: bool = False,
-        ema_period: int = 10,
+        ema_period: int = 20,
         ema_alpha_override: float | None = None,
         les_mode: Literal["single", "repeat5"] = "single",
         grid_shape: tuple[int, int] = (8, 8),
@@ -95,6 +95,12 @@ class Fieldscale:
         self.video = bool(video)
         self.ema_period = int(ema_period)
         self.ema_alpha_override = None if ema_alpha_override is None else float(ema_alpha_override)
+        if self.ema_period < 1:
+            raise ValueError("ema_period must be at least 1.")
+        if self.ema_alpha_override is not None and (
+            not np.isfinite(self.ema_alpha_override) or not 0 < self.ema_alpha_override <= 1
+        ):
+            raise ValueError("ema_alpha_override must be finite and in (0, 1].")
         self.les_mode = str(les_mode)
         self.grid_shape = tuple(int(v) for v in grid_shape)
         if len(self.grid_shape) != 2 or any(value <= 0 for value in self.grid_shape):
@@ -102,7 +108,7 @@ class Fieldscale:
         self.ema_alpha = (
             self.ema_alpha_override
             if self.ema_alpha_override is not None
-            else 2.0 / (self.ema_period + 1.0)
+            else 1.0 / (self.ema_period + 1.0)
         )
 
     def _load_image(self, input: Union[str, np.ndarray]) -> np.ndarray:
@@ -1414,7 +1420,7 @@ class MultiKnotPercentileFieldscale(Fieldscale):
         gamma: float = 1.5,
         clahe: bool = True,
         video: bool = False,
-        ema_period: int = 10,
+        ema_period: int = 20,
         ema_alpha_override: float | None = None,
         les_mode: Literal["single", "repeat5"] = "single",
         grid_shape: tuple[int, int] = (8, 8),
@@ -1476,7 +1482,11 @@ class MultiKnotPercentileFieldscale(Fieldscale):
         knot_grids: np.ndarray,
     ) -> tuple[np.ndarray, dict[str, object]]:
         raw_knot_grids = knot_grids.astype(np.float64, copy=True)
-        prev_knot_before = None if self.prev_knot_grids is None else self.prev_knot_grids.astype(np.float64, copy=True)
+        prev_knot_before = (
+            self.prev_knot_grids.astype(np.float64, copy=True)
+            if self.video and self.prev_knot_grids is not None
+            else None
+        )
         buffer_snapshot = None
 
         stage = "disabled"
@@ -1499,7 +1509,7 @@ class MultiKnotPercentileFieldscale(Fieldscale):
                 self.prev_knot_grids = knot_grids.copy()
         else:
             knot_grids = raw_knot_grids
-            self.prev_knot_grids = knot_grids.copy()
+            self.reset_temporal_state()
 
         post_temporal_before_enforce = knot_grids.astype(np.float64, copy=True)
         knot_grids = enforce_knot_order(

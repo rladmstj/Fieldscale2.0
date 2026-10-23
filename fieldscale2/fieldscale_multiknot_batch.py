@@ -68,7 +68,10 @@ def parse_percentile_text(text: str) -> tuple[float, ...]:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Rescale thermal frames with the supplied FIELDSCALE 2.0 three-knot implementation."
+        description=(
+            "Rescale thermal frames with the supplied FIELDSCALE 2.0 three-knot implementation. "
+            "Image mode is the default, with no temporal smoothing. Use --video for SMA/EMA smoothing."
+        )
     )
     parser.add_argument("--input-dir", type=Path, required=True, help="Folder of raw grayscale thermal frames.")
     parser.add_argument("--output-dir", type=Path, required=True, help="Separate folder for 8-bit frames and run metadata.")
@@ -82,9 +85,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--iteration", type=int, default=7)
     parser.add_argument("--gamma", type=float, default=1.5)
     parser.add_argument("--no-clahe", action="store_true")
-    parser.add_argument("--video", action="store_true")
-    parser.add_argument("--ema-period", type=int, default=10)
-    parser.add_argument("--ema-alpha-override", type=float, default=None)
+    parser.add_argument(
+        "--video", action="store_true",
+        help="Enable temporal smoothing: SMA warmup followed by EMA (default N=20, alpha=1/21).",
+    )
+    parser.add_argument(
+        "--ema-period", type=int, default=20,
+        help="SMA warmup length N for --video (default: 20); EMA alpha defaults to 1/(N+1).",
+    )
+    parser.add_argument(
+        "--ema-alpha-override", type=float, default=None,
+        help="Override EMA alpha for --video with a value in (0, 1].",
+    )
     parser.add_argument("--les-mode", choices=["single", "repeat5"], default="single")
     parser.add_argument("--grid-shape", type=str, default="8,8")
     parser.add_argument("--percentiles", type=str, default="0,99,100")
