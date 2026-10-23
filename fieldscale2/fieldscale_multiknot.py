@@ -77,35 +77,34 @@ def message_passing(grid: np.ndarray, direction: Literal["increase", "decrease"]
 class Fieldscale:
     def __init__(
         self,
-        max_diff: float | None = None,
+        max_diff: float = 500,
         *,
         iteration: int = 7,
         gamma: float = 1.5,
         clahe: bool = True,
         video: bool = False,
         ema_period: int = 20,
-        ema_alpha_override: float | None = None,
-        les_mode: Literal["single", "repeat5"] = "single",
         grid_shape: tuple[int, int] = (8, 8),
     ):
-        self.max_diff = None if max_diff is None else float(max_diff)
-        if self.max_diff is not None and (not np.isfinite(self.max_diff) or self.max_diff < 0):
-            raise ValueError("max_diff must be finite and nonnegative, or None for automatic LES.")
+        self.max_diff = float(max_diff)
+        if not np.isfinite(self.max_diff) or self.max_diff < 0:
+            raise ValueError("max_diff must be finite and nonnegative.")
         self.last_frame_les_diff = None
         self.last_frame_grid_span_median = None
-        self.iteration = int(iteration)
+        iteration_value = float(iteration)
+        if not np.isfinite(iteration_value) or iteration_value < 0 or not iteration_value.is_integer():
+            raise ValueError("iteration must be a nonnegative integer.")
+        self.iteration = int(iteration_value)
         self.gamma = float(gamma)
+        if not np.isfinite(self.gamma) or self.gamma < 0:
+            raise ValueError("gamma must be finite and nonnegative.")
         self.clahe = bool(clahe)
         self.video = bool(video)
         self.ema_period = int(ema_period)
-        self.ema_alpha_override = None if ema_alpha_override is None else float(ema_alpha_override)
+        self.ema_alpha_override = None
         if self.ema_period < 1:
             raise ValueError("ema_period must be at least 1.")
-        if self.ema_alpha_override is not None and (
-            not np.isfinite(self.ema_alpha_override) or not 0 < self.ema_alpha_override <= 1
-        ):
-            raise ValueError("ema_alpha_override must be finite and in (0, 1].")
-        self.les_mode = str(les_mode)
+        self.les_mode = "single"
         self.grid_shape = tuple(int(v) for v in grid_shape)
         if len(self.grid_shape) != 2 or any(value <= 0 for value in self.grid_shape):
             raise ValueError("grid_shape must contain two positive integers.")
@@ -169,8 +168,8 @@ def parse_percentiles(values: Iterable[float]) -> tuple[float, ...]:
     percentiles = tuple(float(value) for value in values)
     if len(percentiles) < 2:
         raise ValueError("At least two percentiles are required.")
-    if any(value < 0.0 or value > 100.0 for value in percentiles):
-        raise ValueError("Percentiles must be within [0, 100].")
+    if any(not np.isfinite(value) or value < 0.0 or value > 100.0 for value in percentiles):
+        raise ValueError("Percentiles must be finite and within [0, 100].")
     if any(b <= a for a, b in zip(percentiles[:-1], percentiles[1:])):
         raise ValueError("Percentiles must be strictly increasing.")
     return percentiles
@@ -206,17 +205,6 @@ def compute_frame_grid_span_median(
         grid_shape=grid_shape,
     ).astype(np.float64)
     return float(np.median(upper_grid - lower_grid))
-
-
-def select_frame_adaptive_les_diff(frame_grid_span_median: float) -> float:
-    frame_grid_span_median = float(frame_grid_span_median)
-    if frame_grid_span_median < 100.0:
-        return 400.0
-    if frame_grid_span_median < 1000.0:
-        return 500.0
-    if frame_grid_span_median > 2000.0:
-        return 800.0
-    return 600.0
 
 
 def symmetric_message_passing(grid: np.ndarray, alpha: float = 0.5) -> np.ndarray:
@@ -324,10 +312,9 @@ def compute_tail_adaptive_segment_totals(
     body_span: float,
     tail_span: float,
     total_width: float = 255.0,
-    tail_suppression_gain: float = 1.0,
-    tail_activation_ratio: float = 0.05,
+    tail_activation_threshold: float = 0.3,
     tail_min_output: float = 0.0,
-    body_linear_cap_ratio: float | None = 2.0,
+    body_linear_cap_ratio: float | None = None,
     body_tail_slope_ratio_cap: float | None = None,
     eps: float = 1e-6,
 ) -> tuple[float, float, dict[str, float | bool]]:
@@ -341,12 +328,14 @@ def compute_tail_adaptive_segment_totals(
     tail_ratio = tail_span / body_span
     linear_cap_applied = False
     slope_ratio_cap_applied = False
-    # The legacy tail_activation_ratio parameter is the compression offset.
-    tail_adjustment_active = tail_ratio > float(0.3)
+    threshold = float(tail_activation_threshold)
+    if not np.isfinite(threshold) or threshold < 0:
+        raise ValueError("tail_activation_threshold must be finite and nonnegative.")
+    tail_adjustment_active = tail_ratio > threshold
 
     if tail_adjustment_active:
-        tail_excess = max(0.0, tail_ratio - float(tail_activation_ratio))
-        compression = 1.0 / (1.0 + float(tail_suppression_gain) * tail_excess)
+        tail_excess = tail_ratio - threshold
+        compression = 1.0 / (1.0 + tail_ratio)
 
         tail_width = linear_tail_width * compression
         tail_width = float(np.clip(tail_width, float(tail_min_output), total_width))
@@ -449,10 +438,9 @@ def build_output_anchors_tail_adaptive_split(
     percentiles: tuple[float, ...],
     split_percentile: float = 99.0,
     span_lambda: float = 1.0,
-    tail_suppression_gain: float = 1.0,
-    tail_activation_ratio: float = 0.05,
+    tail_activation_threshold: float = 0.3,
     tail_min_output: float = 0.0,
-    body_linear_cap_ratio: float | None = 2.0,
+    body_linear_cap_ratio: float | None = None,
     body_tail_slope_ratio_cap: float | None = None,
     eps: float = 1e-6,
 ) -> tuple[np.ndarray, dict[str, np.ndarray]]:
@@ -492,8 +480,7 @@ def build_output_anchors_tail_adaptive_split(
             body_span=float(body_spans.sum()),
             tail_span=float(tail_spans.sum()),
             total_width=255.0,
-            tail_suppression_gain=tail_suppression_gain,
-            tail_activation_ratio=tail_activation_ratio,
+            tail_activation_threshold=tail_activation_threshold,
             tail_min_output=tail_min_output,
             body_linear_cap_ratio=body_linear_cap_ratio,
             body_tail_slope_ratio_cap=body_tail_slope_ratio_cap,
@@ -569,10 +556,9 @@ def build_output_anchors(
     span_lambda: float = 1.0,
     slope_cap_ratio: float | None = 4.0,
     tail_split_percentile: float = 99.0,
-    tail_suppression_gain: float = 1.0,
-    tail_activation_ratio: float = 0.05,
+    tail_activation_threshold: float = 0.3,
     tail_min_output: float = 0.0,
-    body_linear_cap_ratio: float | None = 2.0,
+    body_linear_cap_ratio: float | None = None,
     body_tail_slope_ratio_cap: float | None = None,
     eps: float = 1e-6,
 ) -> tuple[np.ndarray, dict[str, np.ndarray | str | float | None]]:
@@ -617,8 +603,7 @@ def build_output_anchors(
             percentiles=percentiles,
             split_percentile=tail_split_percentile,
             span_lambda=span_lambda,
-            tail_suppression_gain=tail_suppression_gain,
-            tail_activation_ratio=tail_activation_ratio,
+            tail_activation_threshold=tail_activation_threshold,
             tail_min_output=tail_min_output,
             body_linear_cap_ratio=body_linear_cap_ratio,
             body_tail_slope_ratio_cap=body_tail_slope_ratio_cap,
@@ -1429,33 +1414,16 @@ def build_debug_preview(
 class MultiKnotPercentileFieldscale(Fieldscale):
     def __init__(
         self,
-        max_diff: float | None = None,
+        max_diff: float = 500,
         *,
         iteration: int = 7,
         gamma: float = 1.5,
         clahe: bool = True,
         video: bool = False,
         ema_period: int = 20,
-        ema_alpha_override: float | None = None,
-        les_mode: Literal["single", "repeat5"] = "single",
         grid_shape: tuple[int, int] = (8, 8),
         percentiles: Iterable[float] = (0, 99, 100),
-        mid_alpha: float = 0.5,
-        min_interval: float = 1.0,
-        anchor_mode: Literal["span", "tail_adaptive_split"] = "tail_adaptive_split",
-        span_lambda: float = 1.0,
-        slope_cap_ratio: float | None = 4.0,
-        tail_split_percentile: float = 99.0,
-        tail_suppression_gain: float = 1.0,
-        tail_activation_ratio: float = 0.05,
-        tail_min_output: float = 0.0,
-        body_linear_cap_ratio: float | None = 2.0,
-        body_tail_slope_ratio_cap: float | None = None,
-        use_les: bool = True,
-        les_p95_floor: bool = True,
-        p99_violation_strategy: Literal["raw98_or_les_minus_one", "les_minus_one"] = "raw98_or_les_minus_one",
-        use_message_passing: bool = True,
-        enforce_mode: Literal["bottom_up", "top_down"] = "top_down",
+        tail_activation_threshold: float = 0.3,
     ):
         super().__init__(
             max_diff=max_diff,
@@ -1464,27 +1432,29 @@ class MultiKnotPercentileFieldscale(Fieldscale):
             clahe=clahe,
             video=video,
             ema_period=ema_period,
-            ema_alpha_override=ema_alpha_override,
-            les_mode=les_mode,
             grid_shape=grid_shape,
         )
         self.percentiles = parse_percentiles(percentiles)
-        self.mid_alpha = float(mid_alpha)
-        self.min_interval = float(min_interval)
-        self.anchor_mode = str(anchor_mode)
-        self.span_lambda = float(span_lambda)
-        self.slope_cap_ratio = None if slope_cap_ratio is None else float(slope_cap_ratio)
-        self.tail_split_percentile = float(tail_split_percentile)
-        self.tail_suppression_gain = float(tail_suppression_gain)
-        self.tail_activation_ratio = float(tail_activation_ratio)
-        self.tail_min_output = float(tail_min_output)
-        self.body_linear_cap_ratio = None if body_linear_cap_ratio is None else float(body_linear_cap_ratio)
-        self.body_tail_slope_ratio_cap = None if body_tail_slope_ratio_cap is None else float(body_tail_slope_ratio_cap)
-        self.use_les = bool(use_les)
-        self.les_p95_floor = bool(les_p95_floor)
-        self.p99_violation_strategy = str(p99_violation_strategy)
-        self.use_message_passing = bool(use_message_passing)
-        self.enforce_mode = str(enforce_mode)
+        if len(self.percentiles) != 3:
+            raise ValueError("Exactly three percentile knots are required.")
+        self.tail_activation_threshold = float(tail_activation_threshold)
+        if not np.isfinite(self.tail_activation_threshold) or self.tail_activation_threshold < 0:
+            raise ValueError("tail_activation_threshold must be finite and nonnegative.")
+        self.mid_alpha = 0.5
+        self.min_interval = 1.0
+        self.anchor_mode = "tail_adaptive_split"
+        self.span_lambda = 1.0
+        self.slope_cap_ratio = 4.0
+        self.tail_split_percentile = self.percentiles[1]
+        self.tail_suppression_gain = 1.0
+        self.tail_min_output = 0.0
+        self.body_linear_cap_ratio = None
+        self.body_tail_slope_ratio_cap = None
+        self.use_les = True
+        self.les_p95_floor = True
+        self.p99_violation_strategy = "raw98_or_les_minus_one"
+        self.use_message_passing = True
+        self.enforce_mode = "top_down"
         self.prev_knot_grids = None
         self.knot_grid_buffer = deque(maxlen=self.ema_period)
 
@@ -1571,16 +1541,8 @@ class MultiKnotPercentileFieldscale(Fieldscale):
                 lower_percentile=5.0,
                 upper_percentile=95.0,
             )
-            frame_les_diff = (
-                select_frame_adaptive_les_diff(frame_grid_span_median)
-                if self.max_diff is None
-                else self.max_diff
-            )
-            percentile_99_idx = None
-            for idx, value in enumerate(self.percentiles):
-                if abs(float(value) - 99.0) <= 1e-6:
-                    percentile_99_idx = idx
-                    break
+            frame_les_diff = self.max_diff
+            middle_knot_idx = 1
 
             raw_95_grid, raw_98_grid = gridwise_percentiles(
                 image,
@@ -1588,8 +1550,7 @@ class MultiKnotPercentileFieldscale(Fieldscale):
                 grid_shape=self.grid_shape,
             ).astype(np.float64)
 
-            if percentile_99_idx is not None:
-                p99_pre_adjust_grid = knots[percentile_99_idx].astype(np.float64, copy=True)
+            p99_pre_adjust_grid = knots[middle_knot_idx].astype(np.float64, copy=True)
 
             knots[-1] = self._apply_les(
                 knots[-1].astype(np.float64),
@@ -1606,30 +1567,30 @@ class MultiKnotPercentileFieldscale(Fieldscale):
                 knots[-1] = np.maximum(knots[-1], raw_95_grid).astype(np.float64)
             les_100_after_floor_grid = knots[-1].astype(np.float64, copy=True)
 
-            if percentile_99_idx is not None:
-                violating_mask = knots[percentile_99_idx] > knots[-1]
-                p99_violation_mask = violating_mask.astype(bool, copy=True)
-                p99_les_minus_one_grid = (knots[-1] - 1.0).astype(np.float64, copy=True)
-                if self.p99_violation_strategy == "les_minus_one":
-                    replacement = p99_les_minus_one_grid
-                    p99_choose_raw98_mask = np.zeros_like(violating_mask, dtype=bool)
-                    p99_choose_les_minus_one_mask = violating_mask.astype(bool, copy=True)
-                elif self.p99_violation_strategy == "raw98_or_les_minus_one":
-                    replacement = np.minimum(raw_98_grid, p99_les_minus_one_grid)
-                    p99_choose_raw98_mask = np.logical_and(violating_mask, raw_98_grid <= p99_les_minus_one_grid)
-                    p99_choose_les_minus_one_mask = np.logical_and(violating_mask, np.logical_not(p99_choose_raw98_mask))
-                else:
-                    raise ValueError(f"Unsupported p99_violation_strategy: {self.p99_violation_strategy}")
-                p99_replacement_grid = replacement.astype(np.float64, copy=True)
-                p99_choice_grid = np.zeros(knots[-1].shape, dtype=np.int8)
-                p99_choice_grid[p99_choose_raw98_mask] = 1
-                p99_choice_grid[p99_choose_les_minus_one_mask] = 2
-                knots[percentile_99_idx] = np.where(
-                    violating_mask,
-                    replacement,
-                    knots[percentile_99_idx],
-                ).astype(np.float64)
-                p99_post_adjust_grid = knots[percentile_99_idx].astype(np.float64, copy=True)
+            # Legacy debug keys also describe the middle knot when its percentile is changed.
+            violating_mask = knots[middle_knot_idx] >= knots[-1]
+            p99_violation_mask = violating_mask.astype(bool, copy=True)
+            p99_les_minus_one_grid = (knots[-1] - 1.0).astype(np.float64, copy=True)
+            if self.p99_violation_strategy == "les_minus_one":
+                replacement = p99_les_minus_one_grid
+                p99_choose_raw98_mask = np.zeros_like(violating_mask, dtype=bool)
+                p99_choose_les_minus_one_mask = violating_mask.astype(bool, copy=True)
+            elif self.p99_violation_strategy == "raw98_or_les_minus_one":
+                replacement = np.minimum(raw_98_grid, p99_les_minus_one_grid)
+                p99_choose_raw98_mask = np.logical_and(violating_mask, raw_98_grid <= p99_les_minus_one_grid)
+                p99_choose_les_minus_one_mask = np.logical_and(violating_mask, np.logical_not(p99_choose_raw98_mask))
+            else:
+                raise ValueError(f"Unsupported p99_violation_strategy: {self.p99_violation_strategy}")
+            p99_replacement_grid = replacement.astype(np.float64, copy=True)
+            p99_choice_grid = np.zeros(knots[-1].shape, dtype=np.int8)
+            p99_choice_grid[p99_choose_raw98_mask] = 1
+            p99_choice_grid[p99_choose_les_minus_one_mask] = 2
+            knots[middle_knot_idx] = np.where(
+                violating_mask,
+                replacement,
+                knots[middle_knot_idx],
+            ).astype(np.float64)
+            p99_post_adjust_grid = knots[middle_knot_idx].astype(np.float64, copy=True)
             knots = enforce_knot_order(
                 knots,
                 min_interval=self.min_interval,
@@ -1686,8 +1647,7 @@ class MultiKnotPercentileFieldscale(Fieldscale):
             span_lambda=self.span_lambda,
             slope_cap_ratio=self.slope_cap_ratio,
             tail_split_percentile=self.tail_split_percentile,
-            tail_suppression_gain=self.tail_suppression_gain,
-            tail_activation_ratio=self.tail_activation_ratio,
+            tail_activation_threshold=self.tail_activation_threshold,
             tail_min_output=self.tail_min_output,
             body_linear_cap_ratio=self.body_linear_cap_ratio,
             body_tail_slope_ratio_cap=self.body_tail_slope_ratio_cap,
@@ -1708,7 +1668,7 @@ class MultiKnotPercentileFieldscale(Fieldscale):
             "anchor_mode": self.anchor_mode,
             "tail_split_percentile": self.tail_split_percentile,
             "tail_suppression_gain": self.tail_suppression_gain,
-            "tail_activation_ratio": self.tail_activation_ratio,
+            "tail_activation_threshold": self.tail_activation_threshold,
             "tail_min_output": self.tail_min_output,
             "body_linear_cap_ratio": self.body_linear_cap_ratio,
             "body_tail_slope_ratio_cap": self.body_tail_slope_ratio_cap,

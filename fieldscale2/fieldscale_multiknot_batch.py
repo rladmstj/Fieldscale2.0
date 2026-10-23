@@ -5,7 +5,6 @@ import argparse
 import csv
 import hashlib
 import json
-import os
 import platform
 
 import cv2
@@ -26,119 +25,83 @@ class BatchConfig:
     overlay_dir: str | None
     combined_dir: str | None
     debug_dir: str | None
-    max_diff: float | None
+    max_diff: float
     iteration: int
     gamma: float
     clahe: bool
     video: bool
     ema_period: int
-    ema_alpha_override: float | None
-    les_mode: str
     grid_shape: tuple[int, int]
     percentiles: tuple[float, ...]
-    mid_alpha: float
-    min_interval: float
-    anchor_mode: str
-    span_lambda: float
-    slope_cap_ratio: float | None
-    tail_split_percentile: float
-    tail_suppression_gain: float
-    tail_activation_ratio: float
-    tail_min_output: float
-    body_linear_cap_ratio: float | None
-    body_tail_slope_ratio_cap: float | None
-    use_les: bool
-    les_p95_floor: bool
-    p99_violation_strategy: str
-    use_message_passing: bool
-    enforce_mode: str
+    tail_activation_threshold: float
 
 
 def parse_pair(text: str) -> tuple[int, int]:
-    parts = [part.strip() for part in text.split(",") if part.strip()]
+    parts = [part.strip() for part in text.split(",")]
     if len(parts) != 2:
-        raise ValueError("Expected rows,cols format.")
-    values = (int(parts[0]), int(parts[1]))
+        raise argparse.ArgumentTypeError("Expected two positive integers in rows,cols format.")
+    try:
+        values = (int(parts[0]), int(parts[1]))
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("Grid values must be integers in rows,cols format.") from error
     if values[0] <= 0 or values[1] <= 0:
-        raise ValueError("Grid values must be positive.")
+        raise argparse.ArgumentTypeError("Grid values must be positive.")
     return values
 
 
 def parse_percentile_text(text: str) -> tuple[float, ...]:
-    parts = [part.strip() for part in text.split(",") if part.strip()]
-    return parse_percentiles(float(part) for part in parts)
+    parts = [part.strip() for part in text.split(",")]
+    if len(parts) != 3:
+        raise argparse.ArgumentTypeError("Expected exactly three comma-separated percentiles.")
+    try:
+        values = tuple(float(part) for part in parts)
+        if not all(np.isfinite(value) for value in values):
+            raise ValueError("Percentiles must be finite.")
+        return parse_percentiles(values)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(str(error)) from error
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Rescale thermal frames with the supplied FIELDSCALE 2.0 three-knot implementation. "
+            "Rescale thermal frames with FIELDSCALE 2.0 using the paper's default parameters. "
             "Image mode is the default, with no temporal smoothing. Use --video for SMA/EMA smoothing."
         )
     )
-    parser.add_argument("--input-dir", type=Path, required=True, help="Folder of raw grayscale thermal frames.")
-    parser.add_argument("--output-dir", type=Path, required=True, help="Separate folder for 8-bit frames and run metadata.")
-    parser.add_argument("--overlay-dir", type=Path, default=None)
-    parser.add_argument("--combined-dir", type=Path, default=None)
-    parser.add_argument("--save-debug-overlays", action="store_true")
-    parser.add_argument(
-        "--max-diff", type=float, default=None,
-        help="Override frame-adaptive LES with a fixed shared threshold (finite, >= 0).",
+    processing = parser.add_argument_group("Processing")
+    processing.add_argument("--input-dir", type=Path, required=True, help="Folder of raw grayscale thermal frames.")
+    processing.add_argument("--output-dir", type=Path, required=True, help="Separate folder for 8-bit frames and run metadata.")
+    processing.add_argument("--overlay-dir", type=Path, default=None)
+    processing.add_argument("--combined-dir", type=Path, default=None)
+    processing.add_argument("--save-debug-overlays", action="store_true")
+    processing.add_argument("--workers", type=int, default=1, help="Image-processing workers (default: 1); video is sequential.")
+    processing.add_argument("--limit", type=int, default=None, help="Process at most this many frames.")
+
+    paper = parser.add_argument_group("Paper parameters")
+    paper.add_argument(
+        "--max-diff", type=float, default=500.0,
+        help="Fixed shared LES threshold for both upper-knot directions (default: 500).",
     )
-    parser.add_argument("--iteration", type=int, default=7)
-    parser.add_argument("--gamma", type=float, default=1.5)
-    parser.add_argument("--no-clahe", action="store_true")
-    parser.add_argument(
+    paper.add_argument("--iteration", type=int, default=7, help="Message-passing iterations (default: 7).")
+    paper.add_argument("--grid-shape", type=parse_pair, default=(8, 8), metavar="ROWS,COLS", help="Local grid dimensions (default: 8,8).")
+    paper.add_argument("--percentiles", type=parse_percentile_text, default=(0.0, 99.0, 100.0), metavar="LOW,MID,HIGH", help="Three strictly increasing percentiles; MID is the body/tail boundary (default: 0,99,100).")
+    paper.add_argument(
+        "--tail-activation-threshold", type=float, default=0.3,
+        help="Activate tail rescaling when the tail/body span ratio exceeds this value (default: 0.3).",
+    )
+    paper.add_argument(
         "--video", action="store_true",
         help="Enable temporal smoothing: SMA warmup followed by EMA (default N=20, alpha=1/21).",
     )
-    parser.add_argument(
+    paper.add_argument(
         "--ema-period", type=int, default=20,
         help="SMA warmup length N for --video (default: 20); EMA alpha defaults to 1/(N+1).",
     )
-    parser.add_argument(
-        "--ema-alpha-override", type=float, default=None,
-        help="Override EMA alpha for --video with a value in (0, 1].",
-    )
-    parser.add_argument("--les-mode", choices=["single", "repeat5"], default="single")
-    parser.add_argument("--grid-shape", type=str, default="8,8")
-    parser.add_argument("--percentiles", type=str, default="0,99,100")
-    parser.add_argument("--mid-alpha", type=float, default=0.5)
-    parser.add_argument("--min-interval", type=float, default=1.0)
-    parser.add_argument("--anchor-mode", choices=["span", "tail_adaptive_split"], default="tail_adaptive_split")
-    parser.add_argument("--span-lambda", type=float, default=1.0)
-    parser.add_argument("--slope-cap-ratio", type=float, default=4.0)
-    parser.add_argument("--tail-split-percentile", type=float, default=99.0)
-    parser.add_argument("--tail-suppression-gain", type=float, default=1.0)
-    parser.add_argument(
-        "--tail-activation-ratio", type=float, default=0.05,
-        help="Compression offset in the supplied implementation; the activation gate is fixed at 0.3.",
-    )
-    parser.add_argument("--tail-min-output", type=float, default=0.0)
-    parser.add_argument(
-        "--body-linear-cap-ratio", type=float, default=2.0,
-        help="Maximum body slope gain relative to linear rescaling (default: 2).",
-    )
-    parser.add_argument(
-        "--body-tail-slope-ratio-cap", type=float, default=None,
-        help="Optional body-to-tail slope ratio cap (disabled by default).",
-    )
-    les_group = parser.add_mutually_exclusive_group()
-    les_group.add_argument("--use-les", dest="use_les", action="store_true")
-    les_group.add_argument("--no-les", dest="use_les", action="store_false")
-    parser.add_argument("--no-les-p95-floor", action="store_true")
-    parser.add_argument(
-        "--p99-violation-strategy",
-        choices=["raw98_or_les_minus_one", "les_minus_one"],
-        default="raw98_or_les_minus_one",
-    )
-    mp_group = parser.add_mutually_exclusive_group()
-    mp_group.add_argument("--use-mp", dest="use_mp", action="store_true")
-    mp_group.add_argument("--no-mp", dest="use_mp", action="store_false")
-    parser.set_defaults(use_les=True, use_mp=True)
-    parser.add_argument("--enforce-mode", choices=["bottom_up", "top_down"], default="top_down")
-    parser.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 1) // 2))
-    parser.add_argument("--limit", type=int, default=None)
+
+    post = parser.add_argument_group("Optional post-processing")
+    post.add_argument("--gamma", type=float, default=1.5, help="Gamma correction exponent; 0 disables it (default: 1.5).")
+    post.add_argument("--no-clahe", action="store_true", help="Disable CLAHE (enabled by default).")
     args = parser.parse_args()
     if not args.input_dir.is_dir():
         parser.error("--input-dir must be an existing directory")
@@ -149,12 +112,16 @@ def parse_args() -> argparse.Namespace:
             parser.error(f"--{name.replace('_', '-')} must differ from --input-dir")
     if args.workers < 1:
         parser.error("--workers must be at least 1")
-    if args.max_diff is not None and (not np.isfinite(args.max_diff) or args.max_diff < 0):
+    if not np.isfinite(args.max_diff) or args.max_diff < 0:
         parser.error("--max-diff must be finite and at least 0")
+    if args.iteration < 0:
+        parser.error("--iteration must be at least 0")
+    if not np.isfinite(args.tail_activation_threshold) or args.tail_activation_threshold < 0:
+        parser.error("--tail-activation-threshold must be finite and at least 0")
+    if not np.isfinite(args.gamma) or args.gamma < 0:
+        parser.error("--gamma must be finite and at least 0")
     if args.ema_period < 1:
         parser.error("--ema-period must be at least 1")
-    if args.ema_alpha_override is not None and not 0 < args.ema_alpha_override <= 1:
-        parser.error("--ema-alpha-override must be in (0, 1]")
     return args
 
 
@@ -176,26 +143,9 @@ def build_processor(config: BatchConfig) -> MultiKnotPercentileFieldscale:
         clahe=config.clahe,
         video=config.video,
         ema_period=config.ema_period,
-        ema_alpha_override=config.ema_alpha_override,
-        les_mode=config.les_mode,
         grid_shape=config.grid_shape,
         percentiles=config.percentiles,
-        mid_alpha=config.mid_alpha,
-        min_interval=config.min_interval,
-        anchor_mode=config.anchor_mode,
-        span_lambda=config.span_lambda,
-        slope_cap_ratio=config.slope_cap_ratio,
-        tail_split_percentile=config.tail_split_percentile,
-        tail_suppression_gain=config.tail_suppression_gain,
-        tail_activation_ratio=config.tail_activation_ratio,
-        tail_min_output=config.tail_min_output,
-        body_linear_cap_ratio=config.body_linear_cap_ratio,
-        body_tail_slope_ratio_cap=config.body_tail_slope_ratio_cap,
-        use_les=config.use_les,
-        les_p95_floor=config.les_p95_floor,
-        p99_violation_strategy=config.p99_violation_strategy,
-        use_message_passing=config.use_message_passing,
-        enforce_mode=config.enforce_mode,
+        tail_activation_threshold=config.tail_activation_threshold,
     )
 
 
@@ -275,7 +225,6 @@ def process_frame(
         "p99_choice_debug_path": None if p99_choice_debug_path is None else str(p99_choice_debug_path),
         "board_debug_path": None if board_debug_path is None else str(board_debug_path),
         "preview_debug_path": None if preview_debug_path is None else str(preview_debug_path),
-        "use_message_passing": bool(config.use_message_passing),
         "frame_les_diff": frame_les_diff,
         "frame_grid_span_median": frame_grid_span_median,
         "output_mean": float(output.mean()),
@@ -309,28 +258,6 @@ def build_run_metadata(config: BatchConfig) -> dict[str, object]:
     """Capture source provenance and settings derived from config before processing."""
     runner_path = Path(__file__)
     source_files = (runner_path.with_name("fieldscale_multiknot.py"), runner_path)
-    ema_alpha = None
-    if config.video:
-        ema_alpha = (
-            config.ema_alpha_override
-            if config.ema_alpha_override is not None
-            else 1.0 / (config.ema_period + 1.0)
-        )
-    les_settings = {
-        "enabled": config.use_les,
-        "threshold_policy": "disabled" if not config.use_les else "adaptive" if config.max_diff is None else "fixed",
-        "mode": config.les_mode if config.use_les else None,
-    }
-    if config.use_les and config.max_diff is not None:
-        les_settings["fixed_value"] = config.max_diff
-    elif config.use_les:
-        les_settings["adaptive_statistic"] = "Median of raw-input patch-wise P95-P5 spans (s)."
-        les_settings["adaptive_thresholds"] = {
-            "s < 100": 400,
-            "100 <= s < 1000": 500,
-            "1000 <= s <= 2000": 600,
-            "s > 2000": 800,
-        }
     return {
         "runtime_versions": {
             "python": platform.python_version(),
@@ -342,11 +269,18 @@ def build_run_metadata(config: BatchConfig) -> dict[str, object]:
             for source_path in source_files
         },
         "configured_effective_settings": {
-            "les": les_settings,
+            "les": {
+                "threshold_policy": "fixed",
+                "fixed_value": config.max_diff,
+            },
+            "tail": {
+                "activation_threshold": config.tail_activation_threshold,
+                "active_tail_width_formula": "wT_lin / (1 + r)",
+            },
             "temporal": {
                 "mode": "sma_then_ema" if config.video else "disabled",
                 "warmup_frames": config.ema_period if config.video else None,
-                "ema_alpha": ema_alpha,
+                "ema_alpha": 1.0 / (config.ema_period + 1.0) if config.video else None,
             },
         },
     }
@@ -403,32 +337,15 @@ def main() -> None:
         overlay_dir=None if overlay_dir is None else str(overlay_dir),
         combined_dir=None if combined_dir is None else str(combined_dir),
         debug_dir=None if debug_dir is None else str(debug_dir),
-        max_diff=None if args.max_diff is None else float(args.max_diff),
+        max_diff=float(args.max_diff),
         iteration=int(args.iteration),
         gamma=float(args.gamma),
         clahe=not args.no_clahe,
         video=bool(args.video),
         ema_period=int(args.ema_period),
-        ema_alpha_override=None if args.ema_alpha_override is None else float(args.ema_alpha_override),
-        les_mode=str(args.les_mode),
-        grid_shape=parse_pair(args.grid_shape),
-        percentiles=parse_percentile_text(args.percentiles),
-        mid_alpha=float(args.mid_alpha),
-        min_interval=float(args.min_interval),
-        anchor_mode=str(args.anchor_mode),
-        span_lambda=float(args.span_lambda),
-        slope_cap_ratio=float(args.slope_cap_ratio),
-        tail_split_percentile=float(args.tail_split_percentile),
-        tail_suppression_gain=float(args.tail_suppression_gain),
-        tail_activation_ratio=float(args.tail_activation_ratio),
-        tail_min_output=float(args.tail_min_output),
-        body_linear_cap_ratio=float(args.body_linear_cap_ratio),
-        body_tail_slope_ratio_cap=None if args.body_tail_slope_ratio_cap is None else float(args.body_tail_slope_ratio_cap),
-        use_les=bool(args.use_les),
-        les_p95_floor=not bool(args.no_les_p95_floor),
-        p99_violation_strategy=str(args.p99_violation_strategy),
-        use_message_passing=bool(args.use_mp),
-        enforce_mode=str(args.enforce_mode),
+        grid_shape=args.grid_shape,
+        percentiles=args.percentiles,
+        tail_activation_threshold=float(args.tail_activation_threshold),
     )
     run_metadata = build_run_metadata(config)
 

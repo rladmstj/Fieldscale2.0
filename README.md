@@ -44,8 +44,7 @@ The default mode processes each image independently. SMA and EMA are disabled.
 ```bash
 python -m fieldscale2 \
   --input-dir /path/to/raw_frames \
-  --output-dir outputs/demo \
-  --workers 1
+  --output-dir outputs/demo
 ```
 
 ### Video sequences
@@ -56,26 +55,24 @@ Add `--video` to process ordered frames from one sequence. The first 20 frames i
 python -m fieldscale2 \
   --input-dir /path/to/ordered_raw_frames \
   --output-dir outputs/video \
-  --video \
-  --workers 1
+  --video
 ```
 
-Outputs in both modes include the rescaled images, `manifest.csv`, and `summary.json`. The manifest records the LES threshold applied to each frame; the summary includes threshold counts, runtime versions, and source fingerprints.
+Outputs in both modes include the rescaled images, `manifest.csv`, and `summary.json`.
 
 ### Default parameters
 
-Image and video modes share the same spatial and tail-adaptive settings:
+The paper settings are used automatically. Only the input and output folders are required:
 
 | Setting | Default |
 | --- | --- |
 | Grid / percentile knots | `8×8` / `0, 99, 100` |
-| LES threshold | Frame-adaptive `400 / 500 / 600 / 800`, shared by both directions |
-| Message passing | `7` iterations; intermediate-knot blending `0.5` |
-| Tail activation / compression offset | `0.3` / `0.05` |
-| Body amplification limit | `2×` its linear output width |
-| Gamma / CLAHE | `1.5` / enabled |
+| LES threshold | `500`, shared by both directions |
+| Message passing | `7` iterations |
+| Tail activation threshold | `0.3` |
+| Video smoothing window | `N=20`; EMA `alpha=1/(N+1)` |
 
-Omit `--max-diff` to use frame-adaptive LES, or pass a value such as `--max-diff 500` for a fixed threshold. The additional body/tail slope-ratio cap is disabled. See the [full parameter list](docs/USAGE.md#parameters) and [usage guide](docs/USAGE.md) for settings and diagnostic outputs, or run `python -m fieldscale2 --help` for all options.
+These parameters can be changed for experiments; see the [parameter list](docs/USAGE.md#parameters). Optional postprocessing uses gamma `1.5` and CLAHE by default. The [usage guide](docs/USAGE.md) explains overrides, video processing, and diagnostic outputs.
 
 ## Citation
 
