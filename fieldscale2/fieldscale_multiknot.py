@@ -77,7 +77,7 @@ def message_passing(grid: np.ndarray, direction: Literal["increase", "decrease"]
 class Fieldscale:
     def __init__(
         self,
-        max_diff: float = 400,
+        max_diff: float | None = None,
         *,
         iteration: int = 7,
         gamma: float = 1.5,
@@ -88,7 +88,11 @@ class Fieldscale:
         les_mode: Literal["single", "repeat5"] = "single",
         grid_shape: tuple[int, int] = (8, 8),
     ):
-        self.max_diff = float(max_diff)
+        self.max_diff = None if max_diff is None else float(max_diff)
+        if self.max_diff is not None and (not np.isfinite(self.max_diff) or self.max_diff < 0):
+            raise ValueError("max_diff must be finite and nonnegative, or None for automatic LES.")
+        self.last_frame_les_diff = None
+        self.last_frame_grid_span_median = None
         self.iteration = int(iteration)
         self.gamma = float(gamma)
         self.clahe = bool(clahe)
@@ -204,6 +208,17 @@ def compute_frame_grid_span_median(
     return float(np.median(upper_grid - lower_grid))
 
 
+def select_frame_adaptive_les_diff(frame_grid_span_median: float) -> float:
+    frame_grid_span_median = float(frame_grid_span_median)
+    if frame_grid_span_median < 100.0:
+        return 400.0
+    if frame_grid_span_median < 1000.0:
+        return 500.0
+    if frame_grid_span_median > 2000.0:
+        return 800.0
+    return 600.0
+
+
 def symmetric_message_passing(grid: np.ndarray, alpha: float = 0.5) -> np.ndarray:
     out = np.zeros_like(grid, dtype=np.float64)
     for i, j in np.ndindex(grid.shape):
@@ -311,8 +326,8 @@ def compute_tail_adaptive_segment_totals(
     total_width: float = 255.0,
     tail_suppression_gain: float = 1.0,
     tail_activation_ratio: float = 0.05,
-    tail_min_output: float = 4.0,
-    body_linear_cap_ratio: float | None = 1.5,
+    tail_min_output: float = 0.0,
+    body_linear_cap_ratio: float | None = 2.0,
     body_tail_slope_ratio_cap: float | None = None,
     eps: float = 1e-6,
 ) -> tuple[float, float, dict[str, float | bool]]:
@@ -436,8 +451,8 @@ def build_output_anchors_tail_adaptive_split(
     span_lambda: float = 1.0,
     tail_suppression_gain: float = 1.0,
     tail_activation_ratio: float = 0.05,
-    tail_min_output: float = 4.0,
-    body_linear_cap_ratio: float | None = 1.5,
+    tail_min_output: float = 0.0,
+    body_linear_cap_ratio: float | None = 2.0,
     body_tail_slope_ratio_cap: float | None = None,
     eps: float = 1e-6,
 ) -> tuple[np.ndarray, dict[str, np.ndarray]]:
@@ -556,8 +571,8 @@ def build_output_anchors(
     tail_split_percentile: float = 99.0,
     tail_suppression_gain: float = 1.0,
     tail_activation_ratio: float = 0.05,
-    tail_min_output: float = 4.0,
-    body_linear_cap_ratio: float | None = 1.5,
+    tail_min_output: float = 0.0,
+    body_linear_cap_ratio: float | None = 2.0,
     body_tail_slope_ratio_cap: float | None = None,
     eps: float = 1e-6,
 ) -> tuple[np.ndarray, dict[str, np.ndarray | str | float | None]]:
@@ -1414,7 +1429,7 @@ def build_debug_preview(
 class MultiKnotPercentileFieldscale(Fieldscale):
     def __init__(
         self,
-        max_diff: float = 400,
+        max_diff: float | None = None,
         *,
         iteration: int = 7,
         gamma: float = 1.5,
@@ -1424,23 +1439,23 @@ class MultiKnotPercentileFieldscale(Fieldscale):
         ema_alpha_override: float | None = None,
         les_mode: Literal["single", "repeat5"] = "single",
         grid_shape: tuple[int, int] = (8, 8),
-        percentiles: Iterable[float] = (0, 1, 5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 95, 99, 100),
+        percentiles: Iterable[float] = (0, 99, 100),
         mid_alpha: float = 0.5,
         min_interval: float = 1.0,
-        anchor_mode: Literal["span", "tail_adaptive_split"] = "span",
+        anchor_mode: Literal["span", "tail_adaptive_split"] = "tail_adaptive_split",
         span_lambda: float = 1.0,
         slope_cap_ratio: float | None = 4.0,
         tail_split_percentile: float = 99.0,
         tail_suppression_gain: float = 1.0,
         tail_activation_ratio: float = 0.05,
-        tail_min_output: float = 4.0,
-        body_linear_cap_ratio: float | None = 1.5,
+        tail_min_output: float = 0.0,
+        body_linear_cap_ratio: float | None = 2.0,
         body_tail_slope_ratio_cap: float | None = None,
-        use_les: bool = False,
+        use_les: bool = True,
         les_p95_floor: bool = True,
         p99_violation_strategy: Literal["raw98_or_les_minus_one", "les_minus_one"] = "raw98_or_les_minus_one",
-        use_message_passing: bool = False,
-        enforce_mode: Literal["bottom_up", "top_down"] = "bottom_up",
+        use_message_passing: bool = True,
+        enforce_mode: Literal["bottom_up", "top_down"] = "top_down",
     ):
         super().__init__(
             max_diff=max_diff,
@@ -1556,7 +1571,11 @@ class MultiKnotPercentileFieldscale(Fieldscale):
                 lower_percentile=5.0,
                 upper_percentile=95.0,
             )
-            frame_les_diff = float(self.max_diff)
+            frame_les_diff = (
+                select_frame_adaptive_les_diff(frame_grid_span_median)
+                if self.max_diff is None
+                else self.max_diff
+            )
             percentile_99_idx = None
             for idx, value in enumerate(self.percentiles):
                 if abs(float(value) - 99.0) <= 1e-6:
@@ -1636,6 +1655,8 @@ class MultiKnotPercentileFieldscale(Fieldscale):
                 mode=self.enforce_mode,
             )
 
+        self.last_frame_les_diff = frame_les_diff
+        self.last_frame_grid_span_median = frame_grid_span_median
         return knots, {
             "frame_grid_p95_minus_p5_median": frame_grid_span_median,
             "frame_les_diff": frame_les_diff,

@@ -3,10 +3,13 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 import argparse
 import csv
+import hashlib
 import json
 import os
+import platform
 
 import cv2
+import numpy as np
 
 if __package__:
     from .fieldscale_multiknot import MultiKnotPercentileFieldscale, parse_percentiles
@@ -23,7 +26,7 @@ class BatchConfig:
     overlay_dir: str | None
     combined_dir: str | None
     debug_dir: str | None
-    max_diff: float
+    max_diff: float | None
     iteration: int
     gamma: float
     clahe: bool
@@ -79,8 +82,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--combined-dir", type=Path, default=None)
     parser.add_argument("--save-debug-overlays", action="store_true")
     parser.add_argument(
-        "--max-diff", type=float, default=500.0,
-        help="Shared LES threshold for both high and low neighborhood deviations of the upper knot.",
+        "--max-diff", type=float, default=None,
+        help="Override frame-adaptive LES with a fixed shared threshold (finite, >= 0).",
     )
     parser.add_argument("--iteration", type=int, default=7)
     parser.add_argument("--gamma", type=float, default=1.5)
@@ -108,12 +111,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--tail-split-percentile", type=float, default=99.0)
     parser.add_argument("--tail-suppression-gain", type=float, default=1.0)
     parser.add_argument(
-        "--tail-activation-ratio", type=float, default=0.3,
+        "--tail-activation-ratio", type=float, default=0.05,
         help="Compression offset in the supplied implementation; the activation gate is fixed at 0.3.",
     )
-    parser.add_argument("--tail-min-output", type=float, default=4.0)
-    parser.add_argument("--body-linear-cap-ratio", type=float, default=1.5)
-    parser.add_argument("--body-tail-slope-ratio-cap", type=float, default=2.0)
+    parser.add_argument("--tail-min-output", type=float, default=0.0)
+    parser.add_argument(
+        "--body-linear-cap-ratio", type=float, default=2.0,
+        help="Maximum body slope gain relative to linear rescaling (default: 2).",
+    )
+    parser.add_argument(
+        "--body-tail-slope-ratio-cap", type=float, default=None,
+        help="Optional body-to-tail slope ratio cap (disabled by default).",
+    )
     les_group = parser.add_mutually_exclusive_group()
     les_group.add_argument("--use-les", dest="use_les", action="store_true")
     les_group.add_argument("--no-les", dest="use_les", action="store_false")
@@ -127,7 +136,7 @@ def parse_args() -> argparse.Namespace:
     mp_group.add_argument("--use-mp", dest="use_mp", action="store_true")
     mp_group.add_argument("--no-mp", dest="use_mp", action="store_false")
     parser.set_defaults(use_les=True, use_mp=True)
-    parser.add_argument("--enforce-mode", choices=["bottom_up", "top_down"], default="bottom_up")
+    parser.add_argument("--enforce-mode", choices=["bottom_up", "top_down"], default="top_down")
     parser.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 1) // 2))
     parser.add_argument("--limit", type=int, default=None)
     args = parser.parse_args()
@@ -140,6 +149,8 @@ def parse_args() -> argparse.Namespace:
             parser.error(f"--{name.replace('_', '-')} must differ from --input-dir")
     if args.workers < 1:
         parser.error("--workers must be at least 1")
+    if args.max_diff is not None and (not np.isfinite(args.max_diff) or args.max_diff < 0):
+        parser.error("--max-diff must be finite and at least 0")
     if args.ema_period < 1:
         parser.error("--ema-period must be at least 1")
     if args.ema_alpha_override is not None and not 0 < args.ema_alpha_override <= 1:
@@ -199,6 +210,8 @@ def process_frame(
     else:
         debug = processor.process_debug(str(frame_path))
         output = debug["rescaled"]
+    frame_les_diff = processor.last_frame_les_diff
+    frame_grid_span_median = processor.last_frame_grid_span_median
     output_path = Path(config.output_dir) / frame_path.name
     ok = cv2.imwrite(str(output_path), output)
     if not ok:
@@ -263,6 +276,8 @@ def process_frame(
         "board_debug_path": None if board_debug_path is None else str(board_debug_path),
         "preview_debug_path": None if preview_debug_path is None else str(preview_debug_path),
         "use_message_passing": bool(config.use_message_passing),
+        "frame_les_diff": frame_les_diff,
+        "frame_grid_span_median": frame_grid_span_median,
         "output_mean": float(output.mean()),
         "output_min": int(output.min()),
         "output_max": int(output.max()),
@@ -290,8 +305,66 @@ def save_manifest(rows: list[dict[str, object]], output_path: Path) -> None:
         writer.writerows(rows)
 
 
-def build_summary(rows: list[dict[str, object]], args: argparse.Namespace, config: BatchConfig) -> dict[str, object]:
+def build_run_metadata(config: BatchConfig) -> dict[str, object]:
+    """Capture source provenance and settings derived from config before processing."""
+    runner_path = Path(__file__)
+    source_files = (runner_path.with_name("fieldscale_multiknot.py"), runner_path)
+    ema_alpha = None
+    if config.video:
+        ema_alpha = (
+            config.ema_alpha_override
+            if config.ema_alpha_override is not None
+            else 1.0 / (config.ema_period + 1.0)
+        )
+    les_settings = {
+        "enabled": config.use_les,
+        "threshold_policy": "disabled" if not config.use_les else "adaptive" if config.max_diff is None else "fixed",
+        "mode": config.les_mode if config.use_les else None,
+    }
+    if config.use_les and config.max_diff is not None:
+        les_settings["fixed_value"] = config.max_diff
+    elif config.use_les:
+        les_settings["adaptive_statistic"] = "Median of raw-input patch-wise P95-P5 spans (s)."
+        les_settings["adaptive_thresholds"] = {
+            "s < 100": 400,
+            "100 <= s < 1000": 500,
+            "1000 <= s <= 2000": 600,
+            "s > 2000": 800,
+        }
+    return {
+        "runtime_versions": {
+            "python": platform.python_version(),
+            "numpy": np.__version__,
+            "opencv": cv2.__version__,
+        },
+        "source_sha256": {
+            f"fieldscale2/{source_path.name}": hashlib.sha256(source_path.read_bytes()).hexdigest()
+            for source_path in source_files
+        },
+        "configured_effective_settings": {
+            "les": les_settings,
+            "temporal": {
+                "mode": "sma_then_ema" if config.video else "disabled",
+                "warmup_frames": config.ema_period if config.video else None,
+                "ema_alpha": ema_alpha,
+            },
+        },
+    }
+
+
+def build_summary(
+    rows: list[dict[str, object]],
+    args: argparse.Namespace,
+    config: BatchConfig,
+    run_metadata: dict[str, object],
+) -> dict[str, object]:
     total_frames = len(rows)
+    observed_les_threshold_counts = {}
+    for row in rows:
+        if row["frame_les_diff"] is not None:
+            threshold = float(row["frame_les_diff"])
+            key = str(int(threshold)) if threshold.is_integer() else str(threshold)
+            observed_les_threshold_counts[key] = observed_les_threshold_counts.get(key, 0) + 1
     return {
         "input_dir": str(args.input_dir),
         "output_dir": str(args.output_dir),
@@ -300,6 +373,10 @@ def build_summary(rows: list[dict[str, object]], args: argparse.Namespace, confi
             **asdict(config),
             "grid_shape": list(config.grid_shape),
             "percentiles": list(config.percentiles),
+        },
+        "run_metadata": {
+            **run_metadata,
+            "observed_les_threshold_counts": observed_les_threshold_counts,
         },
         "mean_output_mean": sum(float(row["output_mean"]) for row in rows) / total_frames,
     }
@@ -326,7 +403,7 @@ def main() -> None:
         overlay_dir=None if overlay_dir is None else str(overlay_dir),
         combined_dir=None if combined_dir is None else str(combined_dir),
         debug_dir=None if debug_dir is None else str(debug_dir),
-        max_diff=float(args.max_diff),
+        max_diff=None if args.max_diff is None else float(args.max_diff),
         iteration=int(args.iteration),
         gamma=float(args.gamma),
         clahe=not args.no_clahe,
@@ -353,6 +430,7 @@ def main() -> None:
         use_message_passing=bool(args.use_mp),
         enforce_mode=str(args.enforce_mode),
     )
+    run_metadata = build_run_metadata(config)
 
     if config.video and args.workers > 1:
         print("video=True detected; forcing sequential processing to preserve EMA state.", flush=True)
@@ -381,7 +459,7 @@ def main() -> None:
     manifest_path = args.output_dir / "manifest.csv"
     summary_path = args.output_dir / "summary.json"
     save_manifest(rows, manifest_path)
-    summary = build_summary(rows, args, config)
+    summary = build_summary(rows, args, config, run_metadata)
     summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
 
     print(json.dumps({
